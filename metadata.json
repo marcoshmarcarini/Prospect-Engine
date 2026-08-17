@@ -1,0 +1,6 @@
+{
+  "name": "Máquina de Prospecção Automática",
+  "description": "Sistema automatizado de prospecção de empresas locais sem site com enriquecimento via Google Places, IA Gemini e relatórios com links diretos de WhatsApp.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
