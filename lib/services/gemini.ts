@@ -1,22 +1,3 @@
-import { GoogleGenAI } from "@google/genai";
-
-// Inicialização segura do cliente Gemini
-function getGeminiClient(): GoogleGenAI | null {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey || apiKey === "MY_GEMINI_API_KEY") {
-    return null;
-  }
-
-  return new GoogleGenAI({
-    apiKey,
-    httpOptions: {
-      headers: {
-        "User-Agent": "aistudio-build",
-      },
-    },
-  });
-}
-
 export interface PitchGenerationParams {
   companyName: string;
   rating: number;
@@ -25,24 +6,17 @@ export interface PitchGenerationParams {
   senderName?: string;
 }
 
-const CANDIDATE_MODELS = [
-  "gemini-3.6-flash",
-  "gemini-3.7-flash",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash",
-];
-
 /**
- * Gera uma abordagem comercial persuasiva, humanizada e direta para WhatsApp usando o Gemini com resiliência a picos de demanda
+ * Gera uma abordagem comercial persuasiva para WhatsApp usando a API da Groq (Llama 3)
  */
 export async function generateWhatsAppPitch(params: PitchGenerationParams): Promise<string> {
   const { companyName, rating, userRatingsTotal, cityOrAddress } = params;
   const senderName = params.senderName || process.env.YOUR_NAME_OR_BRAND || "Marcos";
+  const apiKey = process.env.GROQ_API_KEY;
 
-  const ai = getGeminiClient();
-
-  // Se a chave não estiver configurada, gera template de alta conversão automaticamente
-  if (!ai) {
+  // Se a chave não estiver configurada, usa o template padrão automaticamente
+  if (!apiKey || apiKey === "MY_GROQ_API_KEY") {
+    console.warn("🚨 [Groq] GROQ_API_KEY não configurada. Usando fallback.");
     return generateFallbackPitch(params);
   }
 
@@ -80,39 +54,45 @@ REGRAS DE ESTILO E FORMATAÇÃO:
 - Retorne APENAS o texto da mensagem pronta para envio no WhatsApp, sem aspas e sem explicações antes ou depois.
 `;
 
-  // Tenta a geração com fallback entre modelos caso algum esteja enfrentando pico de demanda (503/429)
-  for (const modelName of CANDIDATE_MODELS) {
-    try {
-      const response = await ai.models.generateContent({
-        model: modelName,
-        contents: prompt,
-        config: {
-          temperature: 0.6,
-          topP: 0.9,
-        },
-      });
+  try {
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: "llama3-70b-8192", // Modelo hiper rápido e inteligente da Meta
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.6,
+        top_p: 0.9,
+      })
+    });
 
-      const text = response.text?.trim();
-      if (text && text.length > 20) {
-        return text;
-      }
-    } catch (error: any) {
-      const isOverloaded = error?.status === 503 || error?.message?.includes("high demand") || error?.code === 503;
-      if (isOverloaded) {
-        console.warn(`[Gemini] Modelo ${modelName} com alta demanda temporária (503). Tentando modelo alternativo...`);
-      } else {
-        console.warn(`[Gemini] Erro no modelo ${modelName}: ${error?.message || error}. Tentando modelo alternativo...`);
-      }
+    if (!response.ok) {
+      console.warn(`🚨 [Groq Erro HTTP]: ${response.status} ${response.statusText}. Usando fallback...`);
+      return generateFallbackPitch(params);
     }
-  }
 
-  // Se todos os modelos falharem ou estiverem ocupados, utiliza o fallback calibrado
-  console.info(`[Gemini] Utilizando template fallback comercial com a assinatura de ${senderName}.`);
-  return generateFallbackPitch(params);
+    const data = await response.json();
+    const text = data.choices?.[0]?.message?.content?.trim();
+
+    // Valida se a IA gerou um texto válido
+    if (text && text.length > 20) {
+      return text;
+    }
+
+    console.warn("🚨 [Groq] IA retornou texto vazio ou muito curto. Usando fallback...");
+    return generateFallbackPitch(params);
+
+  } catch (error: any) {
+    console.error(`🚨 [Groq Catch Error]: ${error?.message || error}. Usando modelo alternativo...`);
+    return generateFallbackPitch(params);
+  }
 }
 
 /**
- * Template fallback de alta conversão caso o Gemini esteja sem conexão
+ * Template fallback de alta conversão caso a IA falhe
  */
 function generateFallbackPitch(params: PitchGenerationParams): string {
   const { companyName, rating, userRatingsTotal } = params;
