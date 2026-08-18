@@ -9,9 +9,12 @@ export interface PitchGenerationParams {
 /**
  * Gera uma abordagem comercial persuasiva para WhatsApp usando a API da Groq (Llama 3)
  */
-export async function generateWhatsAppPitch(params: PitchGenerationParams): Promise<string> {
+export async function generateWhatsAppPitch(
+  params: PitchGenerationParams,
+): Promise<string> {
   const { companyName, rating, userRatingsTotal, cityOrAddress } = params;
-  const senderName = params.senderName || process.env.YOUR_NAME_OR_BRAND || "Marcos";
+  const senderName =
+    params.senderName || process.env.YOUR_NAME_OR_BRAND || "Marcos";
   const apiKey = process.env.GROQ_API_KEY;
 
   // Se a chave não estiver configurada, usa o template padrão automaticamente
@@ -55,38 +58,53 @@ REGRAS DE ESTILO E FORMATAÇÃO:
 `;
 
   try {
-    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "Content-Type": "application/json"
+    // Escudo anti-travamento: Dá no máximo 6 segundos para a IA responder
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    const response = await fetch(
+      "https://api.groq.com/openai/v1/chat/completions",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal, // Conecta o nosso cronômetro aqui
+        body: JSON.stringify({
+          model: "llama-3.1-70b-versatile", // Modelo mais novo e estável da Meta na Groq
+          messages: [{ role: "user", content: prompt }],
+          temperature: 0.6,
+          top_p: 0.9,
+        }),
       },
-      body: JSON.stringify({
-        model: "llama3-70b-8192", // Modelo hiper rápido e inteligente da Meta
-        messages: [{ role: "user", content: prompt }],
-        temperature: 0.6,
-        top_p: 0.9,
-      })
-    });
+    );
+
+    clearTimeout(timeoutId); // IA respondeu rápido? Desliga o cronômetro.
 
     if (!response.ok) {
-      console.warn(`🚨 [Groq Erro HTTP]: ${response.status} ${response.statusText}. Usando fallback...`);
+      console.warn(
+        `🚨 [Groq Erro HTTP]: ${response.status} ${response.statusText}. Usando fallback...`,
+      );
       return generateFallbackPitch(params);
     }
 
     const data = await response.json();
     const text = data.choices?.[0]?.message?.content?.trim();
 
-    // Valida se a IA gerou um texto válido
     if (text && text.length > 20) {
       return text;
     }
 
-    console.warn("🚨 [Groq] IA retornou texto vazio ou muito curto. Usando fallback...");
+    console.warn(
+      "🚨 [Groq] IA retornou texto vazio ou muito curto. Usando fallback...",
+    );
     return generateFallbackPitch(params);
-
   } catch (error: any) {
-    console.error(`🚨 [Groq Catch Error]: ${error?.message || error}. Usando modelo alternativo...`);
+    // Se der timeout (estourar os 6s), ele cai aqui e salva o sistema!
+    console.error(
+      `🚨 [Groq Catch Error/Timeout]: ${error?.name || error}. Forçando fallback...`,
+    );
     return generateFallbackPitch(params);
   }
 }
@@ -96,10 +114,13 @@ REGRAS DE ESTILO E FORMATAÇÃO:
  */
 function generateFallbackPitch(params: PitchGenerationParams): string {
   const { companyName, rating, userRatingsTotal } = params;
-  const senderName = params.senderName || process.env.YOUR_NAME_OR_BRAND || "Marcos";
+  const senderName =
+    params.senderName || process.env.YOUR_NAME_OR_BRAND || "Marcos";
 
   if (rating >= 4.0) {
-    const reviewsNote = userRatingsTotal ? ` e mais de ${userRatingsTotal} avaliações positivas` : "";
+    const reviewsNote = userRatingsTotal
+      ? ` e mais de ${userRatingsTotal} avaliações positivas`
+      : "";
     return `Olá, tudo bem? Meu nome é ${senderName}.
 
 Estava pesquisando empresas do segmento na região e encontrei o perfil da *${companyName}* no Google Maps. Quero parabenizar pelo trabalho: a nota de vocês (${rating.toFixed(1)} estrelas${reviewsNote}) mostra a confiança e a qualidade do atendimento que vocês oferecem aos clientes.
@@ -135,7 +156,10 @@ Fico à disposição,
 /**
  * Constrói a URL do WhatsApp Web / App já codificada
  */
-export function buildWhatsAppUrl(cleanPhone: string, pitchText: string): string {
+export function buildWhatsAppUrl(
+  cleanPhone: string,
+  pitchText: string,
+): string {
   if (!cleanPhone) return "";
   const encodedMessage = encodeURIComponent(pitchText);
   return `https://wa.me/${cleanPhone}?text=${encodedMessage}`;
