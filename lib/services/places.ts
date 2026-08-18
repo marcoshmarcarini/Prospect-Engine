@@ -78,13 +78,10 @@ export async function searchPlacesWithoutWebsite(
 ): Promise<{ rawPlaces: RawPlace[]; isMockData: boolean }> {
   const apiKey = process.env.GOOGLE_PLACES_API_KEY;
 
-  // Caso a chave ainda não tenha sido configurada no ambiente
-  if (!apiKey || apiKey === "MY_GOOGLE_PLACES_API_KEY" || apiKey.startsWith("AIzaSy_fake")) {
-    console.warn("[Google Places] GOOGLE_PLACES_API_KEY não configurada. Usando dados demonstrativos reais de Cachoeiro de Itapemirim.");
-    return {
-      rawPlaces: getMockPlaces(query),
-      isMockData: true,
-    };
+  // 1. Trava rígida: Se não tiver API Key, o sistema para aqui e avisa.
+  if (!apiKey || apiKey === "MY_GOOGLE_PLACES_API_KEY") {
+    console.error("🚨 [ERRO FATAL]: GOOGLE_PLACES_API_KEY não foi encontrada no arquivo .env");
+    return { rawPlaces: [], isMockData: false };
   }
 
   try {
@@ -93,34 +90,35 @@ export async function searchPlacesWithoutWebsite(
     )}&language=pt-BR&key=${apiKey}`;
 
     const searchRes = await fetch(searchUrl, { next: { revalidate: 0 } });
+    
     if (!searchRes.ok) {
-      throw new Error(`Google Places HTTP error: ${searchRes.status} ${searchRes.statusText}`);
+      console.error(`🚨 [ERRO HTTP Google Places]: ${searchRes.status} ${searchRes.statusText}`);
+      return { rawPlaces: [], isMockData: false };
     }
 
     const searchData = await searchRes.json();
+    
+    // 2. Trava de API: Se o Google recusar a chave (ex: falta de pagamento ou API desativada)
     if (searchData.status !== "OK" && searchData.status !== "ZERO_RESULTS") {
-      throw new Error(`Google Places API returned status: ${searchData.status} - ${searchData.error_message || ""}`);
+      console.error(`🚨 [ERRO API Google Places]: Status ${searchData.status} - Motivo: ${searchData.error_message || "Desconhecido"}`);
+      return { rawPlaces: [], isMockData: false };
     }
 
     const results = searchData.results || [];
     const placesWithoutWebsite: RawPlace[] = [];
 
-    // Limita o número de buscas detalhadas para respeitar cotas e tempo de execução
     const candidates = results.slice(0, Math.min(results.length, maxResults * 2));
 
     for (const candidate of candidates) {
-      // Ignora estabelecimentos permanentemente fechados
       if (candidate.business_status === "CLOSED_PERMANENTLY") {
         continue;
       }
 
-      // Busca os detalhes para verificar telefone e website
       const details = await fetchPlaceDetails(candidate.place_id, apiKey);
 
       const website = details?.website || candidate.website;
       const phone = details?.formatted_phone_number || candidate.formatted_phone_number;
 
-      // FILTRO CRUCIAL: Apenas empresas SEM website
       if (!website || website.trim() === "") {
         const placeLat = details?.geometry?.location?.lat ?? candidate?.geometry?.location?.lat;
         const placeLng = details?.geometry?.location?.lng ?? candidate?.geometry?.location?.lng;
@@ -144,104 +142,18 @@ export async function searchPlacesWithoutWebsite(
       }
     }
 
+    // Retorna APENAS dados reais
     return {
       rawPlaces: placesWithoutWebsite,
       isMockData: false,
     };
+    
   } catch (error) {
-    console.error("[Google Places Search Error]:", error);
-    // Em caso de falha de conexão na API do Google, faz fallback gracioso para não quebrar o cron
+    // 3. Se a internet cair ou o fetch falhar, ele loga o erro no console e retorna vazio, sem inventar dados.
+    console.error("🚨 [ERRO CATASTRÓFICO na busca do Google Places]:", error);
     return {
-      rawPlaces: getMockPlaces(query),
-      isMockData: true,
+      rawPlaces: [],
+      isMockData: false,
     };
   }
-}
-
-/**
- * Dados demonstrativos de alta fidelidade para testes locais imediatos
- */
-function getMockPlaces(query: string): RawPlace[] {
-  const lower = query.toLowerCase();
-  
-  // Coordenadas base de acordo com a cidade pesquisada
-  let baseLat = -20.8489;
-  let baseLng = -41.1128; // Cachoeiro de Itapemirim
-
-  if (lower.includes("vitória") || lower.includes("vitoria")) {
-    baseLat = -20.3155;
-    baseLng = -40.3128;
-  } else if (lower.includes("vila velha")) {
-    baseLat = -20.3297;
-    baseLng = -40.2925;
-  } else if (lower.includes("linhares")) {
-    baseLat = -19.3911;
-    baseLng = -40.0722;
-  } else if (lower.includes("guarapari")) {
-    baseLat = -20.6706;
-    baseLng = -40.4976;
-  }
-
-  return [
-    {
-      place_id: "ChIJ_mock_marmoraria_1",
-      name: "Marmoraria Granito Nobre Cachoeiro",
-      formatted_address: "Rod. Engenheiro Fabiano Vivacqua, Cachoeiro de Itapemirim - ES",
-      rating: 4.8,
-      user_ratings_total: 47,
-      formatted_phone_number: "(28) 99945-8812",
-      international_phone_number: "+55 28 99945-8812",
-      website: undefined,
-      lat: baseLat + 0.0082,
-      lng: baseLng - 0.0045,
-    },
-    {
-      place_id: "ChIJ_mock_marmoraria_2",
-      name: "Itapemirim Mármores & Pedras Decorativas",
-      formatted_address: "Av. Mauro Miranda Madureira, 450, Cachoeiro de Itapemirim - ES",
-      rating: 4.9,
-      user_ratings_total: 62,
-      formatted_phone_number: "(28) 99871-3309",
-      international_phone_number: "+55 28 99871-3309",
-      website: undefined,
-      lat: baseLat - 0.0064,
-      lng: baseLng + 0.0071,
-    },
-    {
-      place_id: "ChIJ_mock_marmoraria_3",
-      name: "Arte em Granitos e Quartzo Sul-Capixaba",
-      formatted_address: "R. Bernardo Horta, 120, Guandu, Cachoeiro de Itapemirim - ES",
-      rating: 4.7,
-      user_ratings_total: 29,
-      formatted_phone_number: "(28) 99912-7744",
-      international_phone_number: "+55 28 99912-7744",
-      website: undefined,
-      lat: baseLat + 0.0035,
-      lng: baseLng + 0.0052,
-    },
-    {
-      place_id: "ChIJ_mock_marmoraria_4",
-      name: "Pedras & Bancadas Imperial",
-      formatted_address: "Bairro Campo Leopoldina, Cachoeiro de Itapemirim - ES",
-      rating: 4.6,
-      user_ratings_total: 18,
-      formatted_phone_number: "(28) 99988-1122",
-      international_phone_number: "+55 28 99988-1122",
-      website: undefined,
-      lat: baseLat - 0.0091,
-      lng: baseLng - 0.0038,
-    },
-    {
-      place_id: "ChIJ_mock_marmoraria_5",
-      name: "Marmoraria Estrela do Sul",
-      formatted_address: "Av. Francisco Lacerda de Aguiar, 210, Cachoeiro de Itapemirim - ES",
-      rating: 5.0,
-      user_ratings_total: 14,
-      formatted_phone_number: "(28) 99901-5566",
-      international_phone_number: "+55 28 99901-5566",
-      website: undefined,
-      lat: baseLat + 0.0048,
-      lng: baseLng - 0.0084,
-    },
-  ];
 }
